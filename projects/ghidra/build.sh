@@ -15,14 +15,14 @@
 #
 ################################################################################
 
-## build project - per ghidra README.md, using ./gradlew instead of gradle
-## --no-daemon disables gradle background process
-## -x exclude any tests
-#./gradlew --no-daemon -I gradle/support/fetchDependencies.gradle
-#./gradlew --no-daemon buildGhidra -x test
+# build project - per ghidra README.md, using ./gradlew instead of gradle
+# --no-daemon disables gradle background process
+# -x exclude any tests
+./gradlew --no-daemon -I gradle/support/fetchDependencies.gradle
+./gradlew --no-daemon buildGhidra -x test
 
-## get the jars (https://google.github.io/oss-fuzz/getting-started/new-project-guide/jvm-lang/)
-#unzip build/dist/ghidra_*.zip -d /src/ghidra-dist
+# get the jars (https://google.github.io/oss-fuzz/getting-started/new-project-guide/jvm-lang/)
+unzip build/dist/ghidra_*.zip -d /src/ghidra-dist
 export GHIDRA_SRC_HOME=/src/ghidra/
 export GHIDRA_HOME=/src/ghidra-dist/ghidra_*/
 
