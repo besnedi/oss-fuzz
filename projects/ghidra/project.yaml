@@ -1,0 +1,6 @@
+homepage: "https://www.nsa.gov/"
+language: jvm
+primary_contact: ""
+main_repo: "https://github.com/NationalSecurityAgency/ghidra.git"
+file_github_issue: false
+
