@@ -38,7 +38,7 @@ PROJECT_JAR=$(find ${OUT}/ -name "*.jar" -type f)
 BUILD_CLASSPATH=$(echo ${PROJECT_JAR} | tr ' ' ':'):${JAZZER_API_PATH}
 
 # All .jar and .class files lie in the same directory as the fuzzer at runtime.
-RUNTIME_CLASSPATH=$(echo ${PROJECT_JARS} | tr ' ' ':')
+RUNTIME_CLASSPATH=$(echo ${PROJECT_JAR} | tr ' ' ':')
 #| xargs printf -- "\$this_dir/%s:"):\$this_dir
 
 for fuzzer in $(find $SRC -name '*Fuzzer.java'); do
