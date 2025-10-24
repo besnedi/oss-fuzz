@@ -17,9 +17,9 @@
 FROM gcr.io/oss-fuzz-base/base-builder-jvm
 RUN apt-get update && \
 	apt-get install -y make autoconf automake libtool \
-		openjdk-17-jdk gradle python3 ca-certificates \
+		openjdk-21-jdk gradle python3 ca-certificates \
 		vim
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 
 # get the src code (only latest commit, not the full history)
 RUN git clone --depth 1 https://github.com/NationalSecurityAgency/ghidra.git ghidra
