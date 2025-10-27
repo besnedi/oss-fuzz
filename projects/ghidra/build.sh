@@ -65,14 +65,100 @@ LD_LIBRARY_PATH=\"${JVM_LD_LIBRARY_PATH}\":\$this_dir \
   chmod +x ${OUT}/${fuzzer_basename}
 
 done
-# e.g.
-# ./autogen.sh
-# ./configure
-# make -j$(nproc) all
 
-# build fuzzers
-# e.g.
-# $CXX $CXXFLAGS -std=c++11 -Iinclude \
-#     /path/to/name_of_fuzzer.cc -o $OUT/name_of_fuzzer \
-#     $LIB_FUZZING_ENGINE /path/to/library.a
+# attempt to cleanup classpath issues
+# ---- Compile all *Fuzzer.java and create wrappers ----
+set -euo pipefail
 
+# 0) Find all fuzzer sources
+mapfile -t FUZZ_SOURCES < <(find "$SRC" -type f -name '*Fuzzer.java' | sort)
+if [[ ${#FUZZ_SOURCES[@]} -eq 0 ]]; then
+  echo "ERROR: No *Fuzzer.java files found under \$SRC" >&2
+  exit 1
+fi
+echo "Found fuzzers:"; printf '  - %s\n' "${FUZZ_SOURCES[@]}"
+
+# 1) Build-time classpath: Jazzer API + everything already in /out
+COMP_CP="$JAZZER_API_PATH"
+if compgen -G "/out/*.jar" > /dev/null; then
+  COMP_CP="$COMP_CP:$(printf "%s:" /out/*.jar)"
+fi
+
+# -------------------------
+# Step 2: build the fuzzers
+# -------------------------
+set -euo pipefail
+
+# Find all fuzzer sources
+mapfile -t FUZZ_SOURCES < <(find "$SRC" -type f -name '*Fuzzer.java' | sort)
+if [[ ${#FUZZ_SOURCES[@]} -eq 0 ]]; then
+  echo "ERROR: No *Fuzzer.java files found under \$SRC" >&2
+  exit 1
+fi
+echo "Found fuzzers:"; printf '  - %s\n' "${FUZZ_SOURCES[@]}"
+
+# Build-time classpath: Jazzer API + every jar we already copied into /out
+COMP_CP="$JAZZER_API_PATH"
+if compgen -G "/out/*.jar" > /dev/null; then
+  COMP_CP="$COMP_CP:$(printf "%s:" /out/*.jar)"
+fi
+
+# Compile ALL fuzzers to a temp dir and jar them (no loose .class on --cp)
+rm -rf /tmp/fuzzbuild && mkdir -p /tmp/fuzzbuild
+javac -cp "$COMP_CP" -d /tmp/fuzzbuild "${FUZZ_SOURCES[@]}"
+jar cf /out/fuzzers.jar -C /tmp/fuzzbuild .
+
+# Helper to emit one wrapper per fuzzer class
+make_wrapper() {
+  local fqcn="$1"
+  local exe="$2"   # wrapper filename under /out
+
+  cat > "/out/${exe}" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+this_dir="$(cd "$(dirname "$0")" && pwd)"
+
+# Smaller mem for -runs=N one-shots
+if [[ " $* " == *" -runs="* ]]; then
+  mem='-Xmx1900m:-Xss900k'
+else
+  mem='-Xmx2048m:-Xss1024k'
+fi
+
+# Runtime CP must contain directories/jars (NOT single .class files)
+runtime_cp="$this_dir:$this_dir/fuzzers.jar"
+for j in "$this_dir"/*.jar; do
+  [[ -e "$j" ]] && runtime_cp="${runtime_cp}:${j}"
+done
+
+LD_LIBRARY_PATH="${JVM_LD_LIBRARY_PATH}:$this_dir" \
+"$this_dir/jazzer_driver" \
+  --agent_path="$this_dir/jazzer_agent_deploy.jar" \
+  --cp="$runtime_cp" \
+  --target_class=__FQCN__ \
+  --jvm_args="$mem:-Djava.awt.headless=true" \
+  "$@"
+EOF
+  sed -i "s#__FQCN__#${fqcn}#g" "/out/${exe}"
+  chmod +x "/out/${exe}"
+}
+
+# Derive FQCNs and create wrappers
+for src in "${FUZZ_SOURCES[@]}"; do
+  CLASS_BASENAME="$(basename "$src" .java)"     # e.g., MachHeaderFuzzer
+  PKG_LINE=$(grep -m1 '^package ' "$src" || true)
+  if [[ -n "$PKG_LINE" ]]; then
+    PKG=$(sed -E 's/^package[[:space:]]+([^;]+);/\1/' <<<"$PKG_LINE")
+    FQCN="${PKG}.${CLASS_BASENAME}"
+  else
+    FQCN="${CLASS_BASENAME}"
+  fi
+  make_wrapper "$FQCN" "$CLASS_BASENAME"
+  echo "Created /out/${CLASS_BASENAME} -> --target_class=${FQCN}"
+done
+
+# Optional sanity: should execute (or throw from your code), not "not found"
+for exe in /out/*Fuzzer; do
+  echo "Sanity: $exe -runs=1"
+  "$exe" -runs=1 || true
+done
