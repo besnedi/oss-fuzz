@@ -18,27 +18,27 @@
 # build project - per ghidra README.md, using ./gradlew instead of gradle
 # --no-daemon disables gradle background process
 # -x exclude any tests
+export GHIDRA_SRC_HOME=/src/ghidra/
+cd $GHIDRA_SRC_HOME
 ./gradlew --no-daemon -I gradle/support/fetchDependencies.gradle
 ./gradlew --no-daemon buildGhidra -x test
 
 # get the jars (https://google.github.io/oss-fuzz/getting-started/new-project-guide/jvm-lang/)
-unzip build/dist/ghidra_*.zip -d /src/ghidra-dist
-export GHIDRA_SRC_HOME=/src/ghidra/
+unzip build/dist/ghidra_*.zip -d ${SRC}/ghidra-dist
 export GHIDRA_HOME=/src/ghidra-dist/ghidra_*/
 
 find ${GHIDRA_SRC_HOME}/ -name "*.jar" -type f ! -name "*-test.jar" ! -name "*-tests.jar" -exec cp -v {} "${OUT}/" \;
 find ${GHIDRA_HOME}/ -name "*.jar" -type f ! -name "*-test.jar" ! -name "*-tests.jar" -exec cp -v {} "${OUT}/" \;
-PROJECT_JAR=$(find ${OUT}/ -name "*.jar" -type f)
+PROJECT_JARS=$(find ${OUT}/ -name "*.jar" -type f)
 
 # Step 2: build the fuzzers
 
 # The classpath at build-time includes the project jars in $OUT as well as the
 # Jazzer API.
-#BUILD_CLASSPATH=$(echo $PROJECT_JARS | xargs printf -- "$OUT/%s:"):$JAZZER_API_PATH
-BUILD_CLASSPATH=$(echo ${PROJECT_JAR} | tr ' ' ':'):${JAZZER_API_PATH}
+BUILD_CLASSPATH=$(echo ${PROJECT_JARS} | tr ' ' ':'):${JAZZER_API_PATH}
 
 # All .jar and .class files lie in the same directory as the fuzzer at runtime.
-RUNTIME_CLASSPATH=$(echo ${PROJECT_JAR} | tr ' ' ':')
+RUNTIME_CLASSPATH=$(echo ${PROJECT_JARS} | tr ' ' ':')
 #| xargs printf -- "\$this_dir/%s:"):\$this_dir
 
 for fuzzer in $(find $SRC -name '*Fuzzer.java'); do
@@ -65,7 +65,6 @@ LD_LIBRARY_PATH=\"$JVM_LD_LIBRARY_PATH\":\$this_dir \
   chmod +x $OUT/$fuzzer_basename
 
 done
-
 # e.g.
 # ./autogen.sh
 # ./configure
