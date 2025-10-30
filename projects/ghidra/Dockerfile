@@ -1,3 +1,4 @@
+#!/bin/bash -eu
 # Copyright 2025 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,67 +15,60 @@
 #
 ################################################################################
 
-FROM gcr.io/oss-fuzz-base/base-builder-jvm
-RUN apt-get update && \
-	apt-get install -y make autoconf automake libtool \
-		openjdk-21-jdk gradle python3 ca-certificates \
-		vim
-ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+# Step 1: build Ghidra
 
-# get the src code (only latest commit, not the full history)
-RUN git clone --depth 1 https://github.com/NationalSecurityAgency/ghidra.git ghidra
+# Java17 compatible Ghidra (build 11.1.2 and older) requires get a compatible version of Gradle (7.3+)
+# Download and use the compatible Gradle version to generate a wrapper (gradlew equivalent)
+GRADLE_VER=7.3.3
+curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip
+unzip -q /tmp/gradle.zip -d /tmp
 
-COPY build.sh $SRC/
-COPY ./*Fuzzer.java $SRC/
+# make the script executable and verify
 
-# get the additional project deps
-WORKDIR $SRC/ghidra
+# build project - per ghidra README.md
+# --no-daemon disables gradle background process
+# -x exclude any tests
+/tmp/gradle-${GRADLE_VER}/bin/gradle --no-daemon -I gradle/support/fetchDependencies.gradle init
+/tmp/gradle-${GRADLE_VER}/bin/gradle --no-daemon buildGhidra -x test
 
-#RUN $SRC/build.sh
-## per ghidra README.md, using ./gradlew instead of gradle
-## --no-daemon disables gradle background process
-## -x exclude any tests
-#RUN ./gradlew --no-daemon -I gradle/support/fetchDependencies.gradle
-#RUN ./gradlew --no-daemon buildGhidra -x test
+# get the jars (https://google.github.io/oss-fuzz/getting-started/new-project-guide/jvm-lang/)
+unzip build/dist/ghidra_*.zip -d /src/ghidra-dist
+export GHIDRA_SRC_HOME=/src/ghidra/
+export GHIDRA_HOME=/src/ghidra-dist/ghidra_*/
 
-## get the binaries
-#RUN unzip build/dist/ghidra_*.zip -d /src/ghidra-dist
-#ENV GHIDRA_HOME=/src/ghidra-dist/ghidra_*/
-#
-#WORKDIR $GHIDRA_HOME
-#ENV GHIDRA_JARS=$(find ${GHIDRA_HOME}/Ghidra/ -name "*.jar" -type f)| tr ' ' ':'
+find ${GHIDRA_SRC_HOME}/ -name "*.jar" -type f ! -name "*-test.jar" ! -name "*-tests.jar" -exec cp -v {} "${OUT}/" \;
+find ${GHIDRA_HOME}/ -name "*.jar" -type f ! -name "*-test.jar" ! -name "*-tests.jar" -exec cp -v {} "${OUT}/" \;
+PROJECT_JAR=$(find ${OUT}/ -name "*.jar" -type f)
 
+# Step 2: build the fuzzers
 
+# The classpath at build-time includes the project jars in $OUT as well as the Jazzer API.
+BUILD_CLASSPATH=$(echo ${PROJECT_JAR} | tr ' ' ':'):${JAZZER_API_PATH}
 
+# All .jar and .class files lie in the same directory as the fuzzer at runtime.
+RUNTIME_CLASSPATH=$(echo ${PROJECT_JARS} | tr ' ' ':')
 
-## per https://github.com/trailofbits/buttercup/blob/main/guides/CUSTOM_CHALLENGES.md
-#RUN apt-get update && apt-get install -y \
-#    make pkg-config
-    
+for fuzzer in $(find $SRC -name '*Fuzzer.java'); do
+  fuzzer_basename=$(basename -s .java $fuzzer)
+  echo $fuzzer
+  javac -cp $BUILD_CLASSPATH $fuzzer
+  cp $SRC/$fuzzer_basename.class $OUT/
 
-# Ghidra build deps
-#RUN apt-get install -y unzip wget git \
-#    openjdk-21-jdk gradle python3 ca-certificates \
-#  && rm -rf /var/lib/apt/lists/*
-#
-#RUN ./gradlew --no-daemon  -I gradle/support/fetchDependencies.gradle init
-#RUN gradle --no-daemon build -x test
-#
-## Unpack the built distribution so we can compile/run fuzz targets against the API jars
-#WORKDIR /src
-#RUN unzip ghidra/build/dist/ghidra_*_PUBLIC_*.zip -d /src/ghidra-dist
-#
-### Add fuzz targets & build script
-##ADD fuzz/ /src/fuzz/
-##ADD build.sh run.sh /src/
-#
-## Jazzer expects FUZZ_TARGET to be built into /out and classpath set
-#ENV GHIDRA_HOME=/src/ghidra-dist/ghidra_*_PUBLIC
-#ENV GHIDRA_JARS="$GHIDRA_HOME/Ghidra/Framework/*/lib/*:$GHIDRA_HOME/Ghidra/Features/*/lib/*:$GHIDRA_HOME/Ghidra/Processors/*/lib/*:$GHIDRA_HOME/lib/*"
-#ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-#
-##RUN /src/build.sh
-#
-## Default run executes both targets under libFuzzer/Jazzer
-#CMD ["/src/run.sh"]
+  # Create an execution wrapper that executes Jazzer with the correct arguments.
+  echo "#!/bin/bash
+# LLVMFuzzerTestOneInput for fuzzer detection.
+this_dir=\$(dirname \"\$0\")
+if [[ \"\$@\" =~ (^| )-runs=[0-9]+($| ) ]]; then
+  mem_settings='-Xmx1900m:-Xss900k'
+else
+  mem_settings='-Xmx2048m:-Xss1024k'
+fi
+LD_LIBRARY_PATH=\"$JVM_LD_LIBRARY_PATH\":\$this_dir \
+\$this_dir/jazzer_driver --agent_path=\$this_dir/jazzer_agent_deploy.jar \
+--cp=$RUNTIME_CLASSPATH \
+--target_class=$fuzzer_basename \
+--jvm_args=\"\$mem_settings:-Djava.awt.headless=true\" \
+\$@" > $OUT/$fuzzer_basename
+  chmod +x $OUT/$fuzzer_basename
 
+done
