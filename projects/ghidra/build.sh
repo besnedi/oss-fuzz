@@ -17,9 +17,9 @@
 
 # Step 1: build Ghidra
 
-# Java17 compatible Ghidra (build 11.1.2 and older) requires get a compatible version of Gradle (7.3+)
+# Java17 compatible Ghidra (build 11.1.2 and older) requires get a compatible version of Gradle (8.5+)
 # Download and use the compatible Gradle version to generate a wrapper (gradlew equivalent)
-GRADLE_VER=7.3.3
+GRADLE_VER=8.5
 curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip
 unzip -q /tmp/gradle.zip -d /tmp
 
