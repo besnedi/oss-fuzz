@@ -14,61 +14,62 @@
 # limitations under the License.
 #
 ################################################################################
+set -o pipefail
 
-# Step 1: build Ghidra
+# ===== Choose Java level for the fuzzers =====
+# Ghidra 10.3.x -> 17; Ghidra 11.x -> 21
+JRE_RELEASE="${JRE_RELEASE:-17}"
 
-# Java17 compatible Ghidra (build 11.1.2 and older) requires get a compatible version of Gradle (8.5+)
-# Download and use the compatible Gradle version to generate a wrapper (gradlew equivalent)
-GRADLE_VER=7.3.3
-curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip
+# ===== Build Ghidra with a modern Gradle (no apt gradle) =====
+GRADLE_VER="${GRADLE_VER:-7.6.4}"  # 7.3+ OK for JDK 17; 7.6.4 is a safe pick
+curl -fsSL -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip"
 unzip -q /tmp/gradle.zip -d /tmp
 
-# make the script executable and verify
-
-# build project - per ghidra README.md
-# --no-daemon disables gradle background process
-# -x exclude any tests
+cd "$SRC/ghidra"
 /tmp/gradle-${GRADLE_VER}/bin/gradle --no-daemon -I gradle/support/fetchDependencies.gradle init
 /tmp/gradle-${GRADLE_VER}/bin/gradle --no-daemon buildGhidra -x test
 
-# get the jars (https://google.github.io/oss-fuzz/getting-started/new-project-guide/jvm-lang/)
-unzip build/dist/ghidra_*.zip -d /src/ghidra-dist
-export GHIDRA_SRC_HOME=/src/ghidra/
-export GHIDRA_HOME=/src/ghidra-dist/ghidra_*/
+# ===== Collect runtime jars =====
+unzip -q build/dist/ghidra_*.zip -d /src/ghidra-dist
+export GHIDRA_SRC_HOME="$SRC/ghidra"
+export GHIDRA_HOME=/src/ghidra-dist/ghidra_*
 
-find ${GHIDRA_SRC_HOME}/ -name "*.jar" -type f ! -name "*-test.jar" ! -name "*-tests.jar" -exec cp -v {} "${OUT}/" \;
-find ${GHIDRA_HOME}/ -name "*.jar" -type f ! -name "*-test.jar" ! -name "*-tests.jar" -exec cp -v {} "${OUT}/" \;
-PROJECT_JAR=$(find ${OUT}/ -name "*.jar" -type f)
+# Copy Ghidra jars (exclude test jars) into $OUT
+find "$GHIDRA_SRC_HOME" -type f -path '*/build/libs/*.jar' ! -name '*-test.jar' ! -name '*-tests.jar' -exec cp -v {} "$OUT/" \;
+find "$GHIDRA_HOME"    -type f -name '*.jar'               ! -name '*-test.jar' ! -name '*-tests.jar' -exec cp -v {} "$OUT/" \;
 
-# Step 2: build the fuzzers
+# Build a colon-separated classpath of ALL jars now in $OUT
+PROJECT_CP="$(find "$OUT" -maxdepth 1 -type f -name '*.jar' -printf '%p:' | sed 's/:$//')"
 
-# The classpath at build-time includes the project jars in $OUT as well as the Jazzer API.
-BUILD_CLASSPATH=$(echo ${PROJECT_JAR} | tr ' ' ':'):${JAZZER_API_PATH}
+# ===== Compile fuzzers and package into one jar =====
+mkdir -p /workspace/fuzzbin
+for fuzzer in $(find "$SRC" -maxdepth 1 -name '*Fuzzer.java'); do
+  echo "Compiling $(basename "$fuzzer") with --release ${JRE_RELEASE}"
+  javac --release "${JRE_RELEASE}" \
+        -cp "${PROJECT_CP}:${JAZZER_API_PATH}" \
+        -d /workspace/fuzzbin \
+        "$fuzzer"
+done
 
-# All .jar and .class files lie in the same directory as the fuzzer at runtime.
-RUNTIME_CLASSPATH=$(echo ${PROJECT_JARS} | tr ' ' ':')
+jar cf "$OUT/ghidra-fuzzers.jar" -C /workspace/fuzzbin .
 
-for fuzzer in $(find $SRC -name '*Fuzzer.java'); do
-  fuzzer_basename=$(basename -s .java $fuzzer)
-  echo $fuzzer
-  javac -cp $BUILD_CLASSPATH $fuzzer
-  cp $SRC/$fuzzer_basename.class $OUT/
+# ===== Emit Jazzer launchers (one per fuzzer class) =====
+RUNTIME_CP="$OUT:$JAZZER_API_PATH:$PROJECT_CP"
 
-  # Create an execution wrapper that executes Jazzer with the correct arguments.
-  echo "#!/bin/bash
-# LLVMFuzzerTestOneInput for fuzzer detection.
-this_dir=\$(dirname \"\$0\")
-if [[ \"\$@\" =~ (^| )-runs=[0-9]+($| ) ]]; then
-  mem_settings='-Xmx1900m:-Xss900k'
-else
-  mem_settings='-Xmx2048m:-Xss1024k'
-fi
-LD_LIBRARY_PATH=\"$JVM_LD_LIBRARY_PATH\":\$this_dir \
-\$this_dir/jazzer_driver --agent_path=\$this_dir/jazzer_agent_deploy.jar \
---cp=$RUNTIME_CLASSPATH \
---target_class=$fuzzer_basename \
---jvm_args=\"\$mem_settings:-Djava.awt.headless=true\" \
-\$@" > $OUT/$fuzzer_basename
-  chmod +x $OUT/$fuzzer_basename
-
+# Extract class names from the fuzzer jar (handles packages too)
+for fqn in $(jar tf "$OUT/ghidra-fuzzers.jar" | grep 'Fuzzer.class$' | sed 's#.class$##; s#/#.#g'); do
+  short_name="${fqn##*.}"
+  cat > "$OUT/$short_name" <<EOF
+#!/bin/bash
+set -euo pipefail
+this_dir="\$(dirname "\$0")"
+# If you compiled with Java 21 (Ghidra 11.x), bundle a JRE 21 in /out/jre21 and uncomment:
+# export JAVA_HOME="\$this_dir/jre21"
+# export PATH="\$JAVA_HOME/bin:\$PATH"
+exec "\$JAZZER_DRIVER" \
+  --cp="$RUNTIME_CP" \
+  --target_class="$fqn" \
+  "\$@"
+EOF
+  chmod +x "$OUT/$short_name"
 done
