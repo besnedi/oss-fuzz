@@ -2,29 +2,37 @@ import com.code_intelligence.jazzer.api.FuzzedDataProvider;
 import org.apache.accumulo.core.security.Authorizations;
 import org.apache.accumulo.core.security.ColumnVisibility;
 import org.apache.accumulo.core.security.VisibilityEvaluator;
+import org.apache.accumulo.core.security.VisibilityParseException;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class ColumnVisibilityFuzzer {
   public static void fuzzerTestOneInput(FuzzedDataProvider data) {
-    // Build a random set of auth tokens
-    int n = Math.max(0, data.consumeInt(0, 8));
+    // Build a non-empty, sane authorization set (1..6 tokens, 1..32 bytes each)
+    int n = data.consumeInt(1, 6);
     List<byte[]> auths = new ArrayList<>(n);
     for (int i = 0; i < n; i++) {
-      auths.add(data.consumeBytes(data.consumeInt(0, 16)));
+      int len = data.consumeInt(1, 32);
+      byte[] tok = data.consumeBytes(len);
+      if (tok.length == 0) tok = new byte[]{'a'};
+      auths.add(tok);
     }
-    Authorizations a = new Authorizations(auths);
 
-    // Feed random visibility expressions
-    byte[] expr = data.consumeBytes(data.remainingBytes());
+    // Visibility expression (cap length for speed)
+    String expr = data.consumeAsciiString(1024);
+
     try {
       ColumnVisibility cv = new ColumnVisibility(expr);
-      // Evaluate with the generated auths (exercise evaluator/AST)
-      VisibilityEvaluator ve = new VisibilityEvaluator(a);
+      Authorizations az = new Authorizations(auths);
+      VisibilityEvaluator ve = new VisibilityEvaluator(az);
+
+      // Evaluate the parsed expression (this API expects ColumnVisibility)
       ve.evaluate(cv);
-    } catch (Exception ignored) {
-      // Jazzer will still observe crashes such as OOM, AIOOBE, etc.
+
+    } catch (IllegalArgumentException | VisibilityParseException expected) {
+      // Input validation / parse failures are normal; keep fuzzing.
+      return;
     }
   }
 }

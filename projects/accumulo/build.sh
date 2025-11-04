@@ -4,6 +4,12 @@ set -o pipefail
 
 ACC_DIR="$SRC/accumulo"
 
+# remove comments from maven.config file...
+pushd "$ACC_DIR"
+[ -f .mvn/maven.config ] && sed -i -e 's/\r$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' .mvn/maven.config || true
+popd
+
+
 # 1) Build Accumulo (skip tests for speed)
 # Build core modules that contain the classes we fuzz
 pushd "$ACC_DIR"
@@ -18,7 +24,7 @@ find "$ACC_DIR" -type f -path '*/target/*.jar' \
   -exec cp -v {} "$OUT/" \;
 
 # 3) Pull compile-time deps for accumulo-core into /out/deps
-pushd /src/accumulo
+pushd "$ACC_DIR"
 mvn -q -DskipTests -pl :accumulo-core -am \
   dependency:copy-dependencies \
   -DincludeScope=compile \
