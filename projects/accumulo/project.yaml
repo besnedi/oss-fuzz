@@ -1,0 +1,8 @@
+homepage: "https://accumulo.apache.org"
+language: jvm
+primary_contact: ""
+main_repo: "https://github.com/apache/accumulo"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
