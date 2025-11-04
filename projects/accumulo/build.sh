@@ -39,7 +39,7 @@ pushd "$ACC_DIR"
 $MVN -q -DskipTests -pl :accumulo-core -am \
   dependency:copy-dependencies \
   -DincludeScope=compile \
-  -DoutputDirectory=/out/deps
+  -DoutputDirectory=$OUT/deps
 popd
 
 # 4) Create a colon-separated classpath of jars in $OUT
@@ -58,10 +58,10 @@ jar cf "$OUT/accumulo-fuzzers.jar" -C /workspace/fuzzbin .
 
 # 6) Emit Jazzer launcher(s)
 
-JAZZER_BIN="${JAZZER_DRIVER:-/out/jazzer_driver}"
+JAZZER_BIN="${JAZZER_DRIVER:-$OUT/jazzer_driver}"
 JAZZER_API="${JAZZER_API_PATH:-/usr/local/lib/jazzer_api_deploy.jar}"
-JAZZER_AGENT_PATH="${JAZZER_AGENT_PATH:-/out/jazzer_agent_deploy.jar}"
-RUNTIME_CP="/out:/out/accumulo-fuzzers.jar:${JAZZER_API}:${ACC_JARS}:${DEP_JARS}"
+JAZZER_AGENT_PATH="${JAZZER_AGENT_PATH:-$OUT/jazzer_agent_deploy.jar}"
+RUNTIME_CP="${OUT}:${OUT}/accumulo-fuzzers.jar:${JAZZER_API}:${ACC_JARS}:${DEP_JARS}"
 cat > "$OUT/ColumnVisibilityFuzzer" <<EOF
 #!/bin/bash
 set -euo pipefail
@@ -71,4 +71,4 @@ exec "$JAZZER_BIN" \
   --target_class=ColumnVisibilityFuzzer "\$@"
 EOF
 chmod 755 "$OUT/ColumnVisibilityFuzzer"
-
+ls -altr "$OUT"
