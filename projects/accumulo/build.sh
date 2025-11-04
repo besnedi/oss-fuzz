@@ -5,13 +5,13 @@ set -o pipefail
 ACC_DIR="$SRC/accumulo"
 
 # Use a newer version of maven
-MAVEN_VER=3.9.9
-MAVEN_DIR=/tmp/apache-maven-$MAVEN_VER
-if ! [ -x "$MAVEN_DIR/bin/mvn" ]; then
-  curl -fsSL -o /tmp/maven.tgz https://archive.apache.org/dist/maven/maven-3/$MAVEN_VER/binaries/apache-maven-$MAVEN_VER-bin.tar.gz
-  tar -C /tmp -xzf /tmp/maven.tgz
-fi
-MVN="$MAVEN_DIR/bin/mvn"
+#MAVEN_VER=3.9.9
+#MAVEN_DIR=/tmp/apache-maven-$MAVEN_VER
+#if ! [ -x "$MAVEN_DIR/bin/mvn" ]; then
+#  curl -fsSL -o /tmp/maven.tgz https://archive.apache.org/dist/maven/maven-3/$MAVEN_VER/binaries/apache-maven-$MAVEN_VER-bin.tar.gz
+#  tar -C /tmp -xzf /tmp/maven.tgz
+#fi
+#MVN="$MAVEN_DIR/bin/mvn"
 export MAVEN_OPTS="-Xmx1g"   # optional but helpful
 
 
@@ -24,7 +24,7 @@ popd
 # 1) Build Accumulo (skip tests for speed)
 # Build core modules that contain the classes we fuzz
 pushd "$ACC_DIR"
-$MVN -q -DskipTests -pl :accumulo-core,:accumulo-start -am package
+mvn -q -DskipTests -pl :accumulo-core,:accumulo-start -am package
 #mvn -q -DskipTests -pl :accumulo-core,:accumulo-fate,:accumulo-start -am package
 popd
 
@@ -36,7 +36,7 @@ find "$ACC_DIR" -type f -path '*/target/*.jar' \
 
 # 3) Pull compile-time deps for accumulo-core into /out/deps
 pushd "$ACC_DIR"
-$MVN -q -DskipTests -pl :accumulo-core -am \
+mvn -q -DskipTests -pl :accumulo-core -am \
   dependency:copy-dependencies \
   -DincludeScope=compile \
   -DoutputDirectory=$OUT/deps
@@ -71,4 +71,7 @@ exec "$JAZZER_BIN" \
   --target_class=ColumnVisibilityFuzzer "\$@"
 EOF
 chmod 755 "$OUT/ColumnVisibilityFuzzer"
+# Normalize line endings just in case
+sed -i 's/\r$//' "$OUT/ColumnVisibilityFuzzer"
+
 ls -altr "$OUT"
