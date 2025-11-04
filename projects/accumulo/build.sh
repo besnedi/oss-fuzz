@@ -4,6 +4,17 @@ set -o pipefail
 
 ACC_DIR="$SRC/accumulo"
 
+# Use a newer version of maven
+MAVEN_VER=3.9.9
+MAVEN_DIR=/tmp/apache-maven-$MAVEN_VER
+if ! [ -x "$MAVEN_DIR/bin/mvn" ]; then
+  curl -fsSL -o /tmp/maven.tgz https://archive.apache.org/dist/maven/maven-3/$MAVEN_VER/binaries/apache-maven-$MAVEN_VER-bin.tar.gz
+  tar -C /tmp -xzf /tmp/maven.tgz
+fi
+MVN="$MAVEN_DIR/bin/mvn"
+export MAVEN_OPTS="-Xmx1g"   # optional but helpful
+
+
 # remove comments from maven.config file...
 pushd "$ACC_DIR"
 [ -f .mvn/maven.config ] && sed -i -e 's/\r$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' .mvn/maven.config || true
@@ -13,7 +24,7 @@ popd
 # 1) Build Accumulo (skip tests for speed)
 # Build core modules that contain the classes we fuzz
 pushd "$ACC_DIR"
-mvn -q -DskipTests -pl :accumulo-core,:accumulo-start -am package
+$MVN -q -DskipTests -pl :accumulo-core,:accumulo-start -am package
 #mvn -q -DskipTests -pl :accumulo-core,:accumulo-fate,:accumulo-start -am package
 popd
 
@@ -25,7 +36,7 @@ find "$ACC_DIR" -type f -path '*/target/*.jar' \
 
 # 3) Pull compile-time deps for accumulo-core into /out/deps
 pushd "$ACC_DIR"
-mvn -q -DskipTests -pl :accumulo-core -am \
+$MVN -q -DskipTests -pl :accumulo-core -am \
   dependency:copy-dependencies \
   -DincludeScope=compile \
   -DoutputDirectory=/out/deps
