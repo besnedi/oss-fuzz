@@ -1,6 +1,9 @@
-homepage: "https://www.nsa.gov/"
+homepage: "https://ghidra-sre.org/"
 language: jvm
-primary_contact: ""
-main_repo: "https://github.com/NationalSecurityAgency/ghidra.git"
-file_github_issue: false
-
+primary_contact: "ghidra-fuzzing-maintainer@example.com"
+auto_ccs: []
+main_repo: "https://github.com/nationalsecurityagency/ghidra"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address

@@ -1,10 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_NAME=kafka
-export GRADLE_USER_HOME="$WORK/gradle"
-chmod +x ./gradlew
-./gradlew --no-daemon -x test -x integrationTest -x systemTestLibs jar
+PROJECT_NAME=nifi
+export MAVEN_OPTS="-Dmaven.repo.local=$WORK/m2 -Xmx2600m -Djava.awt.headless=true"
+chmod +x ./mvnw
+./mvnw -B -ntp -T1C \
+  -DskipTests -Dmaven.test.skip=true -DskipITs \
+  -Dcheckstyle.skip=true -Drat.skip=true -Denforcer.skip=true \
+  -Dspotbugs.skip=true -Dspotless.check.skip=true -Dspotless.apply.skip=true \
+  install
 
 mkdir -p "$OUT/jars" "$WORK/fuzzer-classes"
 copy_jars() {
@@ -12,7 +16,7 @@ copy_jars() {
   local dest_dir="$2"
   [ -d "$source_dir" ] || return 0
   find "$source_dir" -type f -name '*.jar' \
-    ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' ! -name '*-test.jar' \
+    ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' ! -name '*-test.jar' ! -name 'original-*.jar' \
     -print0 | sort -z | while IFS= read -r -d '' jar; do
       local sha base
       sha=$(sha1sum "$jar" | awk '{print substr($1,1,12)}')
@@ -21,7 +25,7 @@ copy_jars() {
     done
 }
 copy_jars "$PWD" "$OUT/jars"
-copy_jars "$GRADLE_USER_HOME/caches/modules-2/files-2.1" "$OUT/jars"
+copy_jars "$WORK/m2" "$OUT/jars"
 
 javac -cp "$JAZZER_API_PATH" -d "$WORK/fuzzer-classes" "$SRC"/*.java
 jar cf "$OUT/fuzzers.jar" -C "$WORK/fuzzer-classes" .
@@ -44,7 +48,7 @@ LD_LIBRARY_PATH="\$JVM_LD_LIBRARY_PATH:\$this_dir:\$this_dir/lib:\${LD_LIBRARY_P
   --agent_path="\$this_dir/jazzer_agent_deploy.jar" \
   --cp="\$runtime_cp" \
   --target_class="$fuzzer_basename" \
-  --jvm_args="-Xmx2200m:-Xss1m:-Djava.awt.headless=true:-Dfile.encoding=UTF-8:-Duser.home=\$tmp_dir:-Djava.io.tmpdir=\$tmp_dir" \
+  --jvm_args="-Xmx2600m:-Xss1m:-Djava.awt.headless=true:-Dfile.encoding=UTF-8:-Duser.home=\$tmp_dir:-Djava.io.tmpdir=\$tmp_dir" \
   --instrumentation_excludes="java.**,javax.**,sun.**,com.sun.**,jdk.**,org.junit.**,org.mockito.**,org.slf4j.**,ch.qos.logback.**" \
   "\$@"
 EOF2

@@ -1,77 +1,54 @@
-#!/bin/bash -eu
-# Build Accumulo jars and package a Jazzer fuzzer
-set -o pipefail
-
-ACC_DIR="$SRC/accumulo"
-
-# Use a newer version of maven
-#MAVEN_VER=3.9.9
-#MAVEN_DIR=/tmp/apache-maven-$MAVEN_VER
-#if ! [ -x "$MAVEN_DIR/bin/mvn" ]; then
-#  curl -fsSL -o /tmp/maven.tgz https://archive.apache.org/dist/maven/maven-3/$MAVEN_VER/binaries/apache-maven-$MAVEN_VER-bin.tar.gz
-#  tar -C /tmp -xzf /tmp/maven.tgz
-#fi
-#MVN="$MAVEN_DIR/bin/mvn"
-export MAVEN_OPTS="-Xmx1g"   # optional but helpful
-
-
-# remove comments from maven.config file...
-pushd "$ACC_DIR"
-[ -f .mvn/maven.config ] && sed -i -e 's/\r$//' -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' .mvn/maven.config || true
-popd
-
-
-# 1) Build Accumulo (skip tests for speed)
-# Build core modules that contain the classes we fuzz
-pushd "$ACC_DIR"
-mvn -q -DskipTests -pl :accumulo-core,:accumulo-start -am package
-#mvn -q -DskipTests -pl :accumulo-core,:accumulo-fate,:accumulo-start -am package
-popd
-
-# 2) Assemble runtime classpath: copy all relevant jars into $OUT
-find "$ACC_DIR" -type f -path '*/target/*.jar' \
-  ! -path '*/target/test-classes/*' \
-  ! -name '*-tests.jar' ! -name '*-test.jar' \
-  -exec cp -v {} "$OUT/" \;
-
-# 3) Pull compile-time deps for accumulo-core into /out/deps
-pushd "$ACC_DIR"
-mvn -q -DskipTests -pl :accumulo-core -am \
-  dependency:copy-dependencies \
-  -DincludeScope=compile \
-  -DoutputDirectory=$OUT/deps
-popd
-
-# 4) Create a colon-separated classpath of jars in $OUT
-#PROJECT_CP="$(find "$OUT" -maxdepth 1 -name '*.jar' -printf '%p:' | sed 's/:$//')"
-ACC_JARS="$(find "$OUT" -maxdepth 1 -type f -name '*.jar' -printf '%p:' | sed 's/:$//')"
-DEP_JARS="$(find "$OUT/deps" -type f -name '*.jar' -printf '%p:' | sed 's/:$//')"
-
-BUILD_CP="${ACC_JARS}:${DEP_JARS}" #:${JAZZER_API_PATH}"
-
-# 5) Compile fuzzer(s) with the proper classpath
-mkdir -p /workspace/fuzzbin
-javac --release 17 -cp "$BUILD_CP" -d /workspace/fuzzbin "$SRC/ColumnVisibilityFuzzer.java"
-
-# Package into a single jar
-jar cf "$OUT/accumulo-fuzzers.jar" -C /workspace/fuzzbin .
-
-# 6) Emit Jazzer launcher(s)
-
-JAZZER_BIN="${JAZZER_DRIVER:-$OUT/jazzer_driver}"
-JAZZER_API="${JAZZER_API_PATH:-/usr/local/lib/jazzer_api_deploy.jar}"
-JAZZER_AGENT_PATH="${JAZZER_AGENT_PATH:-$OUT/jazzer_agent_deploy.jar}"
-RUNTIME_CP="${OUT}:${OUT}/accumulo-fuzzers.jar:${JAZZER_API}:${ACC_JARS}:${DEP_JARS}"
-cat > "$OUT/ColumnVisibilityFuzzer" <<EOF
 #!/bin/bash
 set -euo pipefail
-exec "$JAZZER_BIN" \
-  --agent_path="$JAZZER_AGENT_PATH" \
-  --cp="$RUNTIME_CP" \
-  --target_class=ColumnVisibilityFuzzer "\$@"
-EOF
-chmod 755 "$OUT/ColumnVisibilityFuzzer"
-# Normalize line endings just in case
-sed -i 's/\r$//' "$OUT/ColumnVisibilityFuzzer"
 
-ls -altr "$OUT"
+PROJECT_NAME=accumulo
+export MAVEN_OPTS="-Dmaven.repo.local=$WORK/m2 -Xmx2200m -Djava.awt.headless=true"
+mvn -B -ntp -T1C \
+  -DskipTests -Dmaven.test.skip=true -DskipITs \
+  -Dcheckstyle.skip=true -Drat.skip=true -Dspotbugs.skip=true \
+  package
+
+mkdir -p "$OUT/jars" "$WORK/fuzzer-classes"
+copy_jars() {
+  local source_dir="$1"
+  local dest_dir="$2"
+  [ -d "$source_dir" ] || return 0
+  find "$source_dir" -type f -name '*.jar' \
+    ! -name '*-sources.jar' ! -name '*-javadoc.jar' ! -name '*-tests.jar' ! -name '*-test.jar' ! -name 'original-*.jar' \
+    -print0 | sort -z | while IFS= read -r -d '' jar; do
+      local sha base
+      sha=$(sha1sum "$jar" | awk '{print substr($1,1,12)}')
+      base=$(basename "$jar")
+      cp "$jar" "$dest_dir/${sha}_${base}"
+    done
+}
+copy_jars "$PWD" "$OUT/jars"
+copy_jars "$WORK/m2" "$OUT/jars"
+
+javac -cp "$JAZZER_API_PATH" -d "$WORK/fuzzer-classes" "$SRC"/*.java
+jar cf "$OUT/fuzzers.jar" -C "$WORK/fuzzer-classes" .
+cp "$SRC"/*.dict "$SRC"/*.options "$SRC"/*_seed_corpus.zip "$OUT/" 2>/dev/null || true
+
+for fuzzer_java in "$SRC"/*Fuzzer.java; do
+  fuzzer_basename=$(basename "$fuzzer_java" .java)
+  cat > "$OUT/$fuzzer_basename" <<EOF2
+#!/bin/bash
+# LLVMFuzzerTestOneInput
+set -euo pipefail
+this_dir=\$(cd "\$(dirname "\$0")" && pwd)
+runtime_cp="\$this_dir/fuzzers.jar:\$this_dir"
+shopt -s nullglob
+for jar in "\$this_dir"/jars/*.jar; do runtime_cp="\$runtime_cp:\$jar"; done
+tmp_dir="\${TMPDIR:-/tmp}/oss-fuzz-$PROJECT_NAME-$fuzzer_basename"
+mkdir -p "\$tmp_dir"
+LD_LIBRARY_PATH="\$JVM_LD_LIBRARY_PATH:\$this_dir:\$this_dir/lib:\${LD_LIBRARY_PATH:-}" \
+  "\$this_dir/jazzer_driver" \
+  --agent_path="\$this_dir/jazzer_agent_deploy.jar" \
+  --cp="\$runtime_cp" \
+  --target_class="$fuzzer_basename" \
+  --jvm_args="-Xmx2200m:-Xss1m:-Djava.awt.headless=true:-Dfile.encoding=UTF-8:-Duser.home=\$tmp_dir:-Djava.io.tmpdir=\$tmp_dir" \
+  --instrumentation_excludes="java.**,javax.**,sun.**,com.sun.**,jdk.**,org.junit.**,org.mockito.**,org.slf4j.**,ch.qos.logback.**" \
+  "\$@"
+EOF2
+  chmod +x "$OUT/$fuzzer_basename"
+done

@@ -1,0 +1,11 @@
+homepage: "https://nifi.apache.org/"
+language: jvm
+primary_contact: "security@nifi.apache.org"
+auto_ccs:
+  - "security@apache.org"
+  - "dev@nifi.apache.org"
+main_repo: "https://github.com/apache/nifi"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
