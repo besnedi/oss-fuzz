@@ -50,6 +50,7 @@ def main():
       '/usr/bin/autoupdate',
       # Applying patches is not idempotent.
       '/usr/bin/patch',
+      '/usr/bin/wget',
   ]
 
   for script_path in dummy_scripts:
@@ -105,7 +106,7 @@ def main():
   with open('/usr/bin/cmake', 'w') as f:
     f.write(
         create_wrapper("""
-  if not any(arg in ('--build', '--install', '-E', '-P') for arg in sys.argv[1:]):
+  if not any(arg in ('--build', '--install', '-E', '-P', '--version') for arg in sys.argv[1:]):
     sys.exit(0)
 """))
   shutil.copyfile('/usr/bin/cmake', '/usr/local/bin/cmake')

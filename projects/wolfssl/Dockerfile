@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y make autoconf automake libtool zip wget
 RUN git clone --depth 1 https://github.com/wolfssl/wolfssl $SRC/wolfssl
 RUN git clone --depth 1 https://github.com/wolfSSL/wolfsm
 RUN git clone --depth 1 https://github.com/wolfSSL/wolfssh.git
-RUN git clone --depth 1 https://github.com/guidovranken/fuzzing-headers.git
+RUN git clone --depth 1 https://github.com/JacobBarthelmeh/fuzzing-headers.git
 RUN git clone --depth 1 https://github.com/JacobBarthelmeh/wolf-ssl-ssh-fuzzers
 RUN git clone --depth 1 https://github.com/MozillaSecurity/cryptofuzz
 RUN git clone --depth 1 https://github.com/google/wycheproof.git
@@ -32,7 +32,6 @@ RUN wget https://storage.googleapis.com/pub/gsutil.tar.gz -O $SRC/gsutil.tar.gz
 RUN tar zxf $SRC/gsutil.tar.gz
 ENV PATH="${PATH}:$SRC/gsutil"
 RUN gsutil cp gs://bearssl-backup.clusterfuzz-external.appspot.com/corpus/libFuzzer/bearssl_cryptofuzz-bearssl/public.zip $SRC/corpus_bearssl.zip
-RUN gsutil cp gs://nettle-backup.clusterfuzz-external.appspot.com/corpus/libFuzzer/nettle_cryptofuzz-nettle-with-mini-gmp/public.zip $SRC/corpus_nettle.zip
 RUN gsutil cp gs://libecc-backup.clusterfuzz-external.appspot.com/corpus/libFuzzer/libecc_cryptofuzz-libecc/public.zip $SRC/corpus_libecc.zip
 RUN gsutil cp gs://relic-backup.clusterfuzz-external.appspot.com/corpus/libFuzzer/relic_cryptofuzz-relic/public.zip $SRC/corpus_relic.zip
 RUN gsutil cp gs://cryptofuzz-backup.clusterfuzz-external.appspot.com/corpus/libFuzzer/cryptofuzz_cryptofuzz-openssl/public.zip $SRC/corpus_cryptofuzz-openssl.zip

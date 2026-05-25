@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Google LLC.
+# Copyright 2026 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ class ClangWrapperTest(unittest.TestCase):
         "-foo",
         "-fsanitize-coverage-allowlist=allowlist",
         "-fsanitize-coverage-ignorelist=ignorelist",
+        "-fsanitize-coverage=edge",
         "-c",
         "test.c",
     ]
@@ -90,12 +91,26 @@ class ClangWrapperTest(unittest.TestCase):
     }
 
     new_cdb_fragments = {
-        "test.c.aaa.json": {
+        "test.c.aaa.json": [{
             "directory": "/build/subdir",
             "file": "test.c",
             "output": "test.o",
             "arguments": ["-c", "test.c"],
-        },
+        }],
+        "bar.c.bbb.json": [
+            {
+                "directory": "/build/subdir",
+                "file": "bar.c",
+                "output": "bar.o",
+                "arguments": ["-c", "bar.c"],
+            },
+            {
+                "directory": "/build/subdir",
+                "file": "bar2.c",
+                "output": "bar2.o",
+                "arguments": ["-c", "bar2.c"],
+            },
+        ],
     }
 
     for cdb_fragment_path, cdb_fragment in old_cdb_fragments.items():
@@ -110,7 +125,7 @@ class ClangWrapperTest(unittest.TestCase):
 
     for cdb_fragment_path, cdb_fragment in new_cdb_fragments.items():
       (cdb_path / cdb_fragment_path).write_text(
-          json.dumps(cdb_fragment) + ",\n"
+          ",\n".join([json.dumps(frag) for frag in cdb_fragment]) + ",\n"
       )
 
     (cdb_path / "not_a_json").write_text("not a json")
@@ -125,8 +140,41 @@ class ClangWrapperTest(unittest.TestCase):
             pathlib.Path(merged_cdb_path) / "test.c.aaa.json",
             pathlib.Path(merged_cdb_path) / "foo.c.455.json",
             pathlib.Path(merged_cdb_path) / "foo.123_linker_commands.json",
+            pathlib.Path(merged_cdb_path) / "bar.c.bbb.json",
         ],
     )
+
+  def test_merge_incremental_cdb_duplicate_outputs(self):
+    """Tests that incremental cdb is merged correctly with duplicate outputs."""
+    cdb_path = pathlib.Path(self.create_tempdir().full_path)
+    merged_cdb_path = pathlib.Path(self.create_tempdir().full_path)
+
+    fragment1 = {
+        "directory": "/build",
+        "file": "test.c",
+        "output": "test.o",
+    }
+    (merged_cdb_path / "1.json").write_text(json.dumps(fragment1) + ",\n")
+
+    fragment2 = {
+        "directory": "/build",
+        "file": "test.c",
+        "output": "test.o",
+    }
+    (cdb_path / "2.json").write_text(json.dumps(fragment2) + ",\n")
+    (cdb_path / "3.json").write_text(json.dumps(fragment2) + ",\n")
+
+    clang_wrapper.merge_incremental_cdb(cdb_path, merged_cdb_path)
+
+    self.assertCountEqual(
+        merged_cdb_path.iterdir(),
+        [
+            merged_cdb_path / ".lock",
+            merged_cdb_path / "2.json",
+            merged_cdb_path / "3.json",
+        ],
+    )
+    self.assertFalse((merged_cdb_path / "1.json").exists())
 
 
 if __name__ == "__main__":
